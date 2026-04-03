@@ -198,7 +198,7 @@ async function createSquareOrder({ name, method, time, items, total, note }) {
   let squareData = {};
   try {
     squareData = JSON.parse(responseText);
-  } catch (e) {
+  } catch {
     squareData = { raw: responseText };
   }
 
@@ -208,33 +208,35 @@ async function createSquareOrder({ name, method, time, items, total, note }) {
 
   return {
     orderId: squareData.order?.id || null,
+    orderTotal:
+      squareData.order?.total_money?.amount ||
+      squareData.order?.net_amounts?.total_money?.amount ||
+      0,
     squareData
   };
 }
 
-async function createSquarePayment({ orderId, total }) {
-  const amount = Number(String(total || "0").replace(/[^\d]/g, ""));
-
+async function createSquarePayment({ orderId, amount }) {
   if (!amount || amount <= 0) {
-    throw new Error(`Invalid payment total: ${total}`);
+    throw new Error(`Invalid payment amount: ${amount}`);
   }
 
   const paymentPayload = {
-  idempotency_key: crypto.randomUUID(),
-  source_id: "CASH",
-  amount_money: {
-    amount,
-    currency: "JPY"
-  },
-  cash_details: {
-    buyer_supplied_money: {
-      amount: amount,
-      currency: "JPY"
-    }
-  },
-  order_id: orderId,
-  autocomplete: true
-};
+    idempotency_key: crypto.randomUUID(),
+    source_id: "CASH",
+    amount_money: {
+      amount,
+      currency: "JPY"
+    },
+    cash_details: {
+      buyer_supplied_money: {
+        amount,
+        currency: "JPY"
+      }
+    },
+    order_id: orderId,
+    autocomplete: true
+  };
 
   console.log("square payment payload:", JSON.stringify(paymentPayload, null, 2));
 
@@ -255,7 +257,7 @@ async function createSquarePayment({ orderId, total }) {
   let squareData = {};
   try {
     squareData = JSON.parse(responseText);
-  } catch (e) {
+  } catch {
     squareData = { raw: responseText };
   }
 
@@ -296,8 +298,13 @@ app.post("/square/create-order", async (req, res) => {
       });
     }
 
-    const { orderId, squareData: orderData } = await createSquareOrder({
-      name, method, time, items, total, note
+    const { orderId, orderTotal, squareData: orderData } = await createSquareOrder({
+      name,
+      method,
+      time,
+      items,
+      total,
+      note
     });
 
     if (!orderId) {
@@ -306,12 +313,13 @@ app.post("/square/create-order", async (req, res) => {
 
     const paymentData = await createSquarePayment({
       orderId,
-      total
+      amount: orderTotal
     });
 
     return res.json({
       ok: true,
       orderId,
+      orderTotal,
       paymentId: paymentData.payment?.id || null,
       order: orderData,
       payment: paymentData
