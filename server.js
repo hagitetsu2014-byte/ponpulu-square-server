@@ -152,10 +152,112 @@ function buildLineItems(parsedItems) {
   return { lineItems, unknownItems };
 }
 
-function getPickupAtIso() {
-  const now = new Date();
-  now.setMinutes(now.getMinutes() + 10);
-  return now.toISOString();
+async function createSquareOrder({ name, method, time, items, total, note }) {
+  const parsedItems = parseOrderItems(items);
+  console.log("parsedItems:", parsedItems);
+
+  const { lineItems, unknownItems } = buildLineItems(parsedItems);
+  console.log("lineItems:", lineItems);
+  console.log("unknownItems:", unknownItems);
+
+  if (lineItems.length === 0) {
+    throw new Error(`No matched items for Square: ${unknownItems.join(", ")}`);
+  }
+
+  const orderPayload = {
+    idempotency_key: crypto.randomUUID(),
+    order: {
+      location_id: SQUARE_LOCATION_ID,
+      line_items: lineItems,
+      metadata: {
+        customer_name: String(name || "名無し"),
+        method: String(method || "店内"),
+        requested_time: String(time || "指定なし"),
+        total_text: String(total || "0"),
+        note: String(note || "なし")
+      }
+    }
+  };
+
+  console.log("square order payload:", JSON.stringify(orderPayload, null, 2));
+
+  const response = await fetch("https://connect.squareup.com/v2/orders", {
+    method: "POST",
+    headers: {
+      "Square-Version": SQUARE_API_VERSION,
+      "Authorization": `Bearer ${SQUARE_ACCESS_TOKEN}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(orderPayload)
+  });
+
+  const responseText = await response.text();
+  console.log("square order status:", response.status);
+  console.log("square order response:", responseText);
+
+  let squareData = {};
+  try {
+    squareData = JSON.parse(responseText);
+  } catch (e) {
+    squareData = { raw: responseText };
+  }
+
+  if (!response.ok) {
+    throw new Error(`Square order API error: ${response.status} ${responseText}`);
+  }
+
+  return {
+    orderId: squareData.order?.id || null,
+    squareData
+  };
+}
+
+async function createSquarePayment({ orderId, total }) {
+  const amount = Number(String(total || "0").replace(/[^\d]/g, ""));
+
+  if (!amount || amount <= 0) {
+    throw new Error(`Invalid payment total: ${total}`);
+  }
+
+  const paymentPayload = {
+    idempotency_key: crypto.randomUUID(),
+    source_id: "CASH",
+    amount_money: {
+      amount,
+      currency: "JPY"
+    },
+    order_id: orderId,
+    autocomplete: true
+  };
+
+  console.log("square payment payload:", JSON.stringify(paymentPayload, null, 2));
+
+  const response = await fetch("https://connect.squareup.com/v2/payments", {
+    method: "POST",
+    headers: {
+      "Square-Version": SQUARE_API_VERSION,
+      "Authorization": `Bearer ${SQUARE_ACCESS_TOKEN}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(paymentPayload)
+  });
+
+  const responseText = await response.text();
+  console.log("square payment status:", response.status);
+  console.log("square payment response:", responseText);
+
+  let squareData = {};
+  try {
+    squareData = JSON.parse(responseText);
+  } catch (e) {
+    squareData = { raw: responseText };
+  }
+
+  if (!response.ok) {
+    throw new Error(`Square payment API error: ${response.status} ${responseText}`);
+  }
+
+  return squareData;
 }
 
 app.get("/", (req, res) => {
@@ -179,7 +281,6 @@ app.post("/square/create-order", async (req, res) => {
     }
 
     const { name, method, time, items, total, note } = req.body || {};
-
     console.log("received body:", req.body);
 
     if (!items) {
@@ -189,87 +290,25 @@ app.post("/square/create-order", async (req, res) => {
       });
     }
 
-    const parsedItems = parseOrderItems(items);
-    console.log("parsedItems:", parsedItems);
-
-    const { lineItems, unknownItems } = buildLineItems(parsedItems);
-    console.log("lineItems:", lineItems);
-    console.log("unknownItems:", unknownItems);
-
-    if (lineItems.length === 0) {
-      return res.status(400).json({
-        ok: false,
-        error: "No matched items for Square",
-        unknownItems
-      });
-    }
-
-    const orderPayload = {
-      idempotency_key: crypto.randomUUID(),
-      order: {
-        location_id: SQUARE_LOCATION_ID,
-        line_items: lineItems,
-        fulfillments: [
-          {
-            type: "PICKUP",
-            state: "PROPOSED",
-            pickup_details: {
-              recipient: {
-                display_name: String(name || "名無し")
-              },
-              schedule_type: "SCHEDULED",
-              pickup_at: getPickupAtIso(),
-              note: String(note || "店内注文")
-            }
-          }
-        ],
-        metadata: {
-          customer_name: String(name || "名無し"),
-          method: String(method || "店内"),
-          requested_time: String(time || "指定なし"),
-          total_text: String(total || "0"),
-          note: String(note || "なし")
-        }
-      }
-    };
-
-    console.log("squarePayload:", JSON.stringify(orderPayload, null, 2));
-
-    const response = await fetch("https://connect.squareup.com/v2/orders", {
-      method: "POST",
-      headers: {
-        "Square-Version": SQUARE_API_VERSION,
-        "Authorization": `Bearer ${SQUARE_ACCESS_TOKEN}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(orderPayload)
+    const { orderId, squareData: orderData } = await createSquareOrder({
+      name, method, time, items, total, note
     });
 
-    const responseText = await response.text();
-    console.log("square status:", response.status);
-    console.log("square response:", responseText);
-
-    let squareData = {};
-    try {
-      squareData = JSON.parse(responseText);
-    } catch (e) {
-      squareData = { raw: responseText };
+    if (!orderId) {
+      throw new Error("Square order created but orderId is missing");
     }
 
-    if (!response.ok) {
-      return res.status(response.status).json({
-        ok: false,
-        error: "Square API error",
-        square: squareData,
-        unknownItems
-      });
-    }
+    const paymentData = await createSquarePayment({
+      orderId,
+      total
+    });
 
     return res.json({
       ok: true,
-      orderId: squareData.order?.id || null,
-      square: squareData,
-      unknownItems
+      orderId,
+      paymentId: paymentData.payment?.id || null,
+      order: orderData,
+      payment: paymentData
     });
 
   } catch (e) {
