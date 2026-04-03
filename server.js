@@ -203,12 +203,16 @@ app.post("/square/create-order", async (req, res) => {
       order: {
         location_id: SQUARE_LOCATION_ID,
         line_items: lineItems,
+        amount_money:{
+          amount:Number(total),
+          currency:"JPY"
+        },
         metadata: {
           customer_name: String(name || "名無し"),
           method: String(method || "不明"),
           requested_time: String(time || "指定なし"),
           total_text: String(total || "0"),
-          note: String(note || "")
+          note: String(note || "なし")
         }
       }
     };
