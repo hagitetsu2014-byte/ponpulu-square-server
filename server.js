@@ -220,15 +220,21 @@ async function createSquarePayment({ orderId, total }) {
   }
 
   const paymentPayload = {
-    idempotency_key: crypto.randomUUID(),
-    source_id: "CASH",
-    amount_money: {
-      amount,
-      currency: "JPY"
-    },
-    order_id: orderId,
-    autocomplete: true
-  };
+  idempotency_key: crypto.randomUUID(),
+  source_id: "CASH",
+  amount_money: {
+    amount,
+    currency: "JPY"
+  },
+  cash_details: {
+    buyer_supplied_money: {
+      amount: amount,
+      currency: "JPY"
+    }
+  },
+  order_id: orderId,
+  autocomplete: true
+};
 
   console.log("square payment payload:", JSON.stringify(paymentPayload, null, 2));
 
