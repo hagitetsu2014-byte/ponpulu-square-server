@@ -8,6 +8,7 @@ const PORT = process.env.PORT || 3000;
 const SQUARE_ACCESS_TOKEN = process.env.SQUARE_ACCESS_TOKEN;
 const SQUARE_LOCATION_ID = process.env.SQUARE_LOCATION_ID;
 const SQUARE_API_VERSION = process.env.SQUARE_API_VERSION || "2025-10-16";
+const SQUARE_TERMINAL_DEVICE_ID = process.env.SQUARE_TERMINAL_DEVICE_ID;
 
 const SQUARE_ITEM_MAP = {
   "コーラ": "6KMUOICSTV554DSGY2AIE36Y",
@@ -137,7 +138,6 @@ function buildLineItems(parsedItems) {
 
   parsedItems.forEach(item => {
     const variationId = SQUARE_ITEM_MAP[item.name];
-
     if (!variationId) {
       unknownItems.push(item.name);
       return;
@@ -216,43 +216,50 @@ async function createSquareOrder({ name, method, time, items, total, note }) {
   };
 }
 
-async function createSquarePayment({ orderId, amount }) {
-  if (!amount || amount <= 0) {
-    throw new Error(`Invalid payment amount: ${amount}`);
+async function createTerminalCheckout({ orderId, amount, note, referenceId }) {
+  if (!SQUARE_TERMINAL_DEVICE_ID) {
+    throw new Error("SQUARE_TERMINAL_DEVICE_ID is not set");
   }
 
-  const paymentPayload = {
+  if (!amount || amount <= 0) {
+    throw new Error(`Invalid checkout amount: ${amount}`);
+  }
+
+  const checkoutPayload = {
     idempotency_key: crypto.randomUUID(),
-    source_id: "CASH",
-    amount_money: {
-      amount,
-      currency: "JPY"
-    },
-    cash_details: {
-      buyer_supplied_money: {
+    checkout: {
+      amount_money: {
         amount,
         currency: "JPY"
-      }
-    },
-    order_id: orderId,
-    autocomplete: true
+      },
+      order_id: orderId,
+      device_options: {
+        device_id: SQUARE_TERMINAL_DEVICE_ID,
+        skip_receipt_screen: false,
+        tip_settings: {
+          allow_tipping: false
+        }
+      },
+      note: String(note || "PONPULU注文"),
+      reference_id: String(referenceId || orderId)
+    }
   };
 
-  console.log("square payment payload:", JSON.stringify(paymentPayload, null, 2));
+  console.log("terminal checkout payload:", JSON.stringify(checkoutPayload, null, 2));
 
-  const response = await fetch("https://connect.squareup.com/v2/payments", {
+  const response = await fetch("https://connect.squareup.com/v2/terminals/checkouts", {
     method: "POST",
     headers: {
       "Square-Version": SQUARE_API_VERSION,
       "Authorization": `Bearer ${SQUARE_ACCESS_TOKEN}`,
       "Content-Type": "application/json"
     },
-    body: JSON.stringify(paymentPayload)
+    body: JSON.stringify(checkoutPayload)
   });
 
   const responseText = await response.text();
-  console.log("square payment status:", response.status);
-  console.log("square payment response:", responseText);
+  console.log("terminal checkout status:", response.status);
+  console.log("terminal checkout response:", responseText);
 
   let squareData = {};
   try {
@@ -262,40 +269,31 @@ async function createSquarePayment({ orderId, amount }) {
   }
 
   if (!response.ok) {
-    throw new Error(`Square payment API error: ${response.status} ${responseText}`);
+    throw new Error(`Square terminal checkout API error: ${response.status} ${responseText}`);
   }
 
   return squareData;
 }
 
 app.get("/", (req, res) => {
-  res.send("PONPULU Square order server is running");
+  res.send("PONPULU Square Terminal server is running");
 });
 
 app.post("/square/create-order", async (req, res) => {
   try {
     if (!SQUARE_ACCESS_TOKEN) {
-      return res.status(500).json({
-        ok: false,
-        error: "SQUARE_ACCESS_TOKEN is not set"
-      });
+      return res.status(500).json({ ok: false, error: "SQUARE_ACCESS_TOKEN is not set" });
     }
 
     if (!SQUARE_LOCATION_ID) {
-      return res.status(500).json({
-        ok: false,
-        error: "SQUARE_LOCATION_ID is not set"
-      });
+      return res.status(500).json({ ok: false, error: "SQUARE_LOCATION_ID is not set" });
     }
 
     const { name, method, time, items, total, note } = req.body || {};
     console.log("received body:", req.body);
 
     if (!items) {
-      return res.status(400).json({
-        ok: false,
-        error: "items is required"
-      });
+      return res.status(400).json({ ok: false, error: "items is required" });
     }
 
     const { orderId, orderTotal, squareData: orderData } = await createSquareOrder({
@@ -311,18 +309,21 @@ app.post("/square/create-order", async (req, res) => {
       throw new Error("Square order created but orderId is missing");
     }
 
-    const paymentData = await createSquarePayment({
+    const terminalData = await createTerminalCheckout({
       orderId,
-      amount: orderTotal
+      amount: orderTotal,
+      note: `${name || "名無し"} / ${method || "店内"} / ${note || "なし"}`,
+      referenceId: `${name || "guest"}-${Date.now()}`
     });
 
     return res.json({
       ok: true,
       orderId,
       orderTotal,
-      paymentId: paymentData.payment?.id || null,
+      terminalCheckoutId: terminalData.checkout?.id || null,
+      terminalCheckoutStatus: terminalData.checkout?.status || null,
       order: orderData,
-      payment: paymentData
+      terminal: terminalData
     });
 
   } catch (e) {
