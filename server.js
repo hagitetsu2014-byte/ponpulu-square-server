@@ -369,21 +369,32 @@ app.get("/square/create-device-code", async (req, res) => {
 
 
 // ===== device一覧取得 =====
-app.get("/square/devices", async (req, res) => {
+app.get("/square/create-device-code", async (req, res) => {
   try {
-    const response = await fetch("https://connect.squareup.com/v2/devices", {
-      method: "GET",
+    const body = {
+      idempotency_key: crypto.randomUUID(),
+      device_code: {
+        name: "PONPULU Terminal",
+        product_type: "TERMINAL_API" // ←これ追加🔥
+      }
+    };
+
+    const response = await fetch("https://connect.squareup.com/v2/devices/codes", {
+      method: "POST",
       headers: {
         "Square-Version": SQUARE_API_VERSION,
-        "Authorization": `Bearer ${SQUARE_ACCESS_TOKEN}`
-      }
+        "Authorization": `Bearer ${SQUARE_ACCESS_TOKEN}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(body)
     });
 
     const data = await response.json();
 
     return res.json({
       ok: true,
-      devices: data.devices
+      code: data.device_code?.code,
+      full: data
     });
 
   } catch (e) {
