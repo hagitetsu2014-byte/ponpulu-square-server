@@ -375,7 +375,7 @@ app.get("/square/create-device-code", async (req, res) => {
       idempotency_key: crypto.randomUUID(),
       device_code: {
         name: "PONPULU Terminal",
-        product_type: "TERMINAL_API" // ←これ追加🔥
+        product_type: "TERMINAL_API"
       }
     };
 
@@ -395,6 +395,28 @@ app.get("/square/create-device-code", async (req, res) => {
       ok: true,
       code: data.device_code?.code,
       full: data
+    });
+
+  } catch (e) {
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/square/devices", async (req, res) => {
+  try {
+    const response = await fetch("https://connect.squareup.com/v2/devices", {
+      method: "GET",
+      headers: {
+        "Square-Version": SQUARE_API_VERSION,
+        "Authorization": `Bearer ${SQUARE_ACCESS_TOKEN}`
+      }
+    });
+
+    const data = await response.json();
+
+    return res.json({
+      ok: true,
+      devices: data.devices
     });
 
   } catch (e) {
