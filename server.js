@@ -6,10 +6,9 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 const SQUARE_ACCESS_TOKEN = process.env.SQUARE_ACCESS_TOKEN;
-const SQUARE_LOCATION_ID = process.env.SQUARE_LOCATION_ID || "L6C4VDGGTTN1C";
-const SQUARE_API_VERSION = process.env.SQUARE_API_VERSION || "2025-10-16";
+const SQUARE_LOCATION_ID = process.env.SQUARE_LOCATION_ID;
+const SQUARE_API_VERSION = "2025-10-16";
 
-// ここに前回作った全対応表を入れる
 const SQUARE_ITEM_MAP = {
   "コーラ": "6KMUOICSTV554DSGY2AIE36Y",
   "グレープソーダ": "2OTXGV5NMLG7RRLSNBT2CG2C",
@@ -100,119 +99,166 @@ const SQUARE_ITEM_MAP = {
   "単品メニュー（ささみほぐし）": "FB7BHRZXQEOUW5ZXBUWWOBSU"
 };
 
+function normalizeItemName(name) {
+  return String(name || "")
+    .replace(/　/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function parseOrderItems(itemsText) {
   if (!itemsText || typeof itemsText !== "string") return [];
 
   return itemsText
     .split(" / ")
-    .map(s => s.trim())
+    .map(item => item.trim())
     .filter(Boolean)
-    .map(entry => {
-      const m = entry.match(/^(.*)\s×\s(\d+)$/);
-      if (!m) {
-        return { raw: entry, name: entry, qty: 1 };
+    .map(item => {
+      const match = item.match(/^(.*)\s×\s(\d+)$/);
+      if (!match) {
+        return {
+          raw: item,
+          name: normalizeItemName(item),
+          qty: 1
+        };
       }
+
       return {
-        raw: entry,
-        name: m[1].trim(),
-        qty: Number(m[2])
+        raw: item,
+        name: normalizeItemName(match[1]),
+        qty: parseInt(match[2], 10)
       };
     });
 }
 
-function buildSquareLineItems(parsedItems) {
+function buildLineItems(parsedItems) {
   const lineItems = [];
   const unknownItems = [];
 
-  for (const item of parsedItems) {
+  parsedItems.forEach(item => {
     const variationId = SQUARE_ITEM_MAP[item.name];
+
     if (!variationId) {
-      unknownItems.push(item.raw);
-      continue;
+      unknownItems.push(item.name);
+      return;
     }
 
     lineItems.push({
       quantity: String(item.qty),
       catalog_object_id: variationId
     });
-  }
+  });
 
   return { lineItems, unknownItems };
 }
 
+app.get("/", (req, res) => {
+  res.send("PONPULU Square order server is running");
+});
+
 app.post("/square/create-order", async (req, res) => {
   try {
+    if (!SQUARE_ACCESS_TOKEN) {
+      return res.status(500).json({
+        ok: false,
+        error: "SQUARE_ACCESS_TOKEN is not set"
+      });
+    }
+
+    if (!SQUARE_LOCATION_ID) {
+      return res.status(500).json({
+        ok: false,
+        error: "SQUARE_LOCATION_ID is not set"
+      });
+    }
+
     const { name, method, time, items, total, note } = req.body || {};
 
+    console.log("received body:", req.body);
+
     if (!items) {
-      return res.status(400).json({ ok: false, error: "items is required" });
+      return res.status(400).json({
+        ok: false,
+        error: "items is required"
+      });
     }
 
     const parsedItems = parseOrderItems(items);
-    const { lineItems, unknownItems } = buildSquareLineItems(parsedItems);
+    console.log("parsedItems:", parsedItems);
+
+    const { lineItems, unknownItems } = buildLineItems(parsedItems);
+    console.log("lineItems:", lineItems);
+    console.log("unknownItems:", unknownItems);
 
     if (lineItems.length === 0) {
       return res.status(400).json({
         ok: false,
-        error: "square line items is empty",
+        error: "No matched items for Square",
         unknownItems
       });
     }
 
-    const idempotencyKey = crypto.randomUUID();
-
-    const body = {
-      idempotency_key: idempotencyKey,
+    const orderPayload = {
+      idempotency_key: crypto.randomUUID(),
       order: {
         location_id: SQUARE_LOCATION_ID,
         line_items: lineItems,
         metadata: {
-          customer_name: name || "",
-          method: method || "",
-          requested_time: time || "",
-          order_total_text: total || "",
-          note: note || ""
+          customer_name: String(name || ""),
+          method: String(method || ""),
+          requested_time: String(time || ""),
+          total_text: String(total || ""),
+          note: String(note || "")
         }
       }
     };
 
-    const squareRes = await fetch("https://connect.squareup.com/v2/orders", {
+    console.log("squarePayload:", JSON.stringify(orderPayload, null, 2));
+
+    const response = await fetch("https://connect.squareup.com/v2/orders", {
       method: "POST",
       headers: {
+        "Square-Version": SQUARE_API_VERSION,
         "Authorization": `Bearer ${SQUARE_ACCESS_TOKEN}`,
-        "Content-Type": "application/json",
-        "Square-Version": SQUARE_API_VERSION
+        "Content-Type": "application/json"
       },
-      body: JSON.stringify(body)
+      body: JSON.stringify(orderPayload)
     });
 
-    const squareJson = await squareRes.json();
+    const responseText = await response.text();
+    console.log("square status:", response.status);
+    console.log("square response:", responseText);
 
-    if (!squareRes.ok) {
-      return res.status(squareRes.status).json({
+    let squareData = {};
+    try {
+      squareData = JSON.parse(responseText);
+    } catch (e) {
+      squareData = { raw: responseText };
+    }
+
+    if (!response.ok) {
+      return res.status(response.status).json({
         ok: false,
-        square: squareJson,
+        error: "Square API error",
+        square: squareData,
         unknownItems
       });
     }
 
     return res.json({
       ok: true,
-      orderId: squareJson.order?.id || null,
-      state: squareJson.order?.state || null,
-      unknownItems,
-      square: squareJson
+      orderId: squareData.order?.id || null,
+      square: squareData,
+      unknownItems
     });
-  } catch (err) {
+
+  } catch (e) {
+    console.error("server error:", e);
     return res.status(500).json({
       ok: false,
-      error: err.message
+      error: e.message
     });
   }
-});
-
-app.get("/", (req, res) => {
-  res.send("PONPULU Square order server is running");
 });
 
 app.listen(PORT, () => {
