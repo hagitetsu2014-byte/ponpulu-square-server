@@ -334,6 +334,62 @@ app.post("/square/create-order", async (req, res) => {
     });
   }
 });
+// ===== device_code発行（GETで叩ける簡易版）=====
+app.get("/square/create-device-code", async (req, res) => {
+  try {
+    const body = {
+      idempotency_key: crypto.randomUUID(),
+      device_code: {
+        name: "PONPULU Terminal"
+      }
+    };
+
+    const response = await fetch("https://connect.squareup.com/v2/devices/codes", {
+      method: "POST",
+      headers: {
+        "Square-Version": SQUARE_API_VERSION,
+        "Authorization": `Bearer ${SQUARE_ACCESS_TOKEN}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(body)
+    });
+
+    const data = await response.json();
+
+    return res.json({
+      ok: true,
+      code: data.device_code?.code,
+      full: data
+    });
+
+  } catch (e) {
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+
+// ===== device一覧取得 =====
+app.get("/square/devices", async (req, res) => {
+  try {
+    const response = await fetch("https://connect.squareup.com/v2/devices", {
+      method: "GET",
+      headers: {
+        "Square-Version": SQUARE_API_VERSION,
+        "Authorization": `Bearer ${SQUARE_ACCESS_TOKEN}`
+      }
+    });
+
+    const data = await response.json();
+
+    return res.json({
+      ok: true,
+      devices: data.devices
+    });
+
+  } catch (e) {
+    return res.status(500).json({ error: e.message });
+  }
+});
 
 app.listen(PORT, () => {
   console.log(`Server started on port ${PORT}`);
