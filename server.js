@@ -204,10 +204,10 @@ app.post("/square/create-order", async (req, res) => {
         location_id: SQUARE_LOCATION_ID,
         line_items: lineItems,
         metadata: {
-          customer_name: String(name || ""),
-          method: String(method || ""),
-          requested_time: String(time || ""),
-          total_text: String(total || ""),
+          customer_name: String(name || "名無し"),
+          method: String(method || "不明"),
+          requested_time: String(time || "指定なし"),
+          total_text: String(total || "0"),
           note: String(note || "")
         }
       }
