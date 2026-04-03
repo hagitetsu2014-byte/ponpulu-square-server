@@ -1,5 +1,5 @@
 {
-  "name": "ponpulu-square-order-server",
+  "name": "ponpulu-square-server",
   "version": "1.0.0",
   "type": "module",
   "main": "server.js",
