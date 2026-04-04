@@ -341,15 +341,16 @@ app.get("/square/create-device-code", async (req, res) => {
       idempotency_key: crypto.randomUUID(),
       device_code: {
         name: "PONPULU Terminal",
-        product_type: "TERMINAL_API"
+        product_type: "TERMINAL_API",
+        location_id: SQUARE_LOCATION_ID
       }
     };
 
     const response = await fetch("https://connect.squareup.com/v2/devices/codes", {
       method: "POST",
       headers: {
-        "Square-Version": process.env.SQUARE_API_VERSION,
-        "Authorization": `Bearer ${process.env.SQUARE_ACCESS_TOKEN}`,
+        "Square-Version": SQUARE_API_VERSION,
+        "Authorization": `Bearer ${SQUARE_ACCESS_TOKEN}`,
         "Content-Type": "application/json"
       },
       body: JSON.stringify(body)
@@ -360,7 +361,7 @@ app.get("/square/create-device-code", async (req, res) => {
     console.log("device code response:", data);
 
     if (!response.ok) {
-      return res.status(400).json({
+      return res.status(response.status).json({
         ok: false,
         error: data
       });
@@ -368,7 +369,7 @@ app.get("/square/create-device-code", async (req, res) => {
 
     return res.json({
       ok: true,
-      code: data.device_code.code,
+      code: data.device_code?.code,
       full: data
     });
 
@@ -377,6 +378,7 @@ app.get("/square/create-device-code", async (req, res) => {
     return res.status(500).json({ error: e.message });
   }
 });
+
 app.get("/square/devices", async (req, res) => {
   try {
     const response = await fetch("https://connect.squareup.com/v2/devices", {
